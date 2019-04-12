@@ -39,8 +39,8 @@ public class ThriftMetastoreModule
     {
         OptionalBinder.newOptionalBinder(binder, ThriftMetastoreClientFactory.class)
                 .setDefault().to(DefaultThriftMetastoreClientFactory.class).in(Scopes.SINGLETON);
-        binder.bind(MetastoreLocator.class).to(StaticMetastoreLocator.class).in(Scopes.SINGLETON);
-        configBinder(binder).bindConfig(StaticMetastoreConfig.class);
+        binder.bind(MetastoreLocator.class).to(DiscoveryMetastoreLocator.class).in(Scopes.SINGLETON);
+        configBinder(binder).bindConfig(DiscoveryMetastoreConfig.class);
         configBinder(binder).bindConfig(ThriftMetastoreConfig.class);
 
         binder.bind(ThriftMetastore.class).to(ThriftHiveMetastore.class).in(Scopes.SINGLETON);
