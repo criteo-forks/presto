@@ -73,6 +73,7 @@ import static io.prestosql.plugin.hive.metastore.MetastoreUtil.getProtectMode;
 import static io.prestosql.plugin.hive.metastore.MetastoreUtil.makePartitionName;
 import static io.prestosql.plugin.hive.metastore.MetastoreUtil.verifyOnline;
 import static io.prestosql.plugin.hive.util.HiveCoercionPolicy.canCoerce;
+import static io.prestosql.plugin.hive.util.HiveCoercionPolicy.coercibleIntermediate;
 import static io.prestosql.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.prestosql.spi.StandardErrorCode.SERVER_SHUTTING_DOWN;
 import static io.prestosql.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.GROUPED_SCHEDULING;
@@ -337,7 +338,13 @@ public class HiveSplitManager
                 if ((tableColumns == null) || (partitionColumns == null)) {
                     throw new PrestoException(HIVE_INVALID_METADATA, format("Table '%s' or partition '%s' has null columns", tableName, partName));
                 }
-                TableToPartitionMapping tableToPartitionMapping = getTableToPartitionMapping(session, tableName, partName, tableColumns, partitionColumns);
+                TableToPartitionMapping tableToPartitionMapping;
+                if (useParquetNestedColumnEvolutionSupport(session, partition)) { // Not tested for ORC
+                    tableToPartitionMapping = getCoercibleTableToPartitionMapping(tableName, partName, tableColumns, partitionColumns);
+                }
+                else {
+                    tableToPartitionMapping = getTableToPartitionMapping(session, tableName, partName, tableColumns, partitionColumns);
+                }
 
                 if (bucketProperty.isPresent()) {
                     Optional<HiveBucketProperty> partitionBucketProperty = partition.getStorage().getBucketProperty();
@@ -369,6 +376,52 @@ public class HiveSplitManager
             return results.build();
         });
         return concat(partitionBatches);
+    }
+
+    private boolean useParquetNestedColumnEvolutionSupport(ConnectorSession session, Partition partition)
+    {
+        return isPartitionUseColumnNames(session) &&
+                HiveStorageFormat.PARQUET.getSerDe().equals(partition.getStorage().getStorageFormat().getSerDe());
+    }
+
+    private TableToPartitionMapping getCoercibleTableToPartitionMapping(SchemaTableName tableName, String partName, List<Column> tableColumns, List<Column> partitionColumns)
+    {
+        ImmutableMap.Builder<Integer, HiveTypeName> columnCoercions = ImmutableMap.builder();
+
+        ImmutableMap.Builder<String, Column> partitionsColsByNameBuilder = ImmutableMap.builder();
+        for (Column partitionColumn : partitionColumns) {
+            partitionsColsByNameBuilder.put(partitionColumn.getName(), partitionColumn);
+        }
+        ImmutableMap<String, Column> partitionsColsByName = partitionsColsByNameBuilder.build();
+
+        for (int i = 0; i < tableColumns.size(); i++) {
+            final int tableIndex = i;
+            Column tableColumn = tableColumns.get(tableIndex);
+            String tableColumnName = tableColumn.getName();
+            HiveType tableType = tableColumn.getType();
+            Optional.ofNullable(partitionsColsByName.get(tableColumnName))
+                    .map(Column::getType)
+                    .ifPresent(partitionType -> {
+                        if (!tableType.equals(partitionType)) {
+                            Optional<HiveType> coercibleIntermediate = coercibleIntermediate(typeManager, partitionType, tableType);
+                            if (!coercibleIntermediate.isPresent()) {
+                                throw new PrestoException(HIVE_PARTITION_SCHEMA_MISMATCH, format("" +
+                                                "There is a invalid schema change between table and partition schemas. " +
+                                                "The types are incompatible and cannot be coerced. " +
+                                                "The column '%s' in table '%s' is declared as type '%s', " +
+                                                "but partition '%s' declared column '%s' as type '%s'.",
+                                        tableColumnName,
+                                        tableName,
+                                        tableType,
+                                        partName,
+                                        tableColumnName,
+                                        partitionType));
+                            }
+                            columnCoercions.put(tableIndex, coercibleIntermediate.get().getHiveTypeName());
+                        }
+                    });
+        }
+        return new TableToPartitionMapping(Optional.empty(), columnCoercions.build());
     }
 
     private TableToPartitionMapping getTableToPartitionMapping(ConnectorSession session, SchemaTableName tableName, String partName, List<Column> tableColumns, List<Column> partitionColumns)
