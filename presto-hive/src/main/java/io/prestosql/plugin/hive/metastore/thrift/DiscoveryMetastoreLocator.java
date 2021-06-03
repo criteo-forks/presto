@@ -162,7 +162,10 @@ public class DiscoveryMetastoreLocator
         }
 
         return result.getResponse().stream().map(uri -> {
-            String host = uri.getNode().getAddress();
+            String host = uri.getService().getAddress();
+            if (host == null || host.isEmpty()) {
+                host = uri.getNode().getAddress();
+            }
             int port = uri.getService().getPort();
             return HostAndPort.fromParts(host, port);
         }).collect(Collectors.toList());
