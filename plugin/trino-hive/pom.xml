@@ -15,6 +15,14 @@
     <description>Trino - Hive connector</description>
 
     <dependencies>
+
+        <dependency>
+            <groupId>com.criteo</groupId>
+            <artifactId>consul-client</artifactId>
+            <version>1.0.0</version>
+            <scope>compile</scope>
+        </dependency>
+
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>

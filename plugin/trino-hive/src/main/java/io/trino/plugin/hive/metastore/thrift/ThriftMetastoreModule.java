@@ -25,6 +25,10 @@ import io.trino.metastore.HiveMetastoreFactory;
 import io.trino.metastore.RawHiveMetastoreFactory;
 import io.trino.plugin.base.security.UserNameProvider;
 import io.trino.plugin.hive.AllowHiveTableRename;
+import io.trino.plugin.hive.metastore.thrift.discovery.DiscoveryMetastoreConfig;
+import io.trino.plugin.hive.metastore.thrift.discovery.DiscoveryMetastoreLocator;
+import io.trino.plugin.hive.metastore.thrift.discovery.DiscoveryTokenAwareMetastoreClientFactory;
+import io.trino.plugin.hive.metastore.thrift.discovery.MetastoreEndpointLocator;
 
 import java.util.concurrent.ExecutorService;
 
@@ -47,7 +51,12 @@ public final class ThriftMetastoreModule
         requireNonNull(staticMetastoreConfig.getMetastoreUris(), "metastoreUris is null");
         OptionalBinder.newOptionalBinder(binder, ThriftMetastoreClientFactory.class)
                 .setDefault().to(DefaultThriftMetastoreClientFactory.class).in(Scopes.SINGLETON);
-        binder.bind(TokenAwareMetastoreClientFactory.class).to(StaticTokenAwareMetastoreClientFactory.class).in(Scopes.SINGLETON);
+        configBinder(binder).bindConfig(ThriftMetastoreConfig.class);
+
+        binder.bind(MetastoreEndpointLocator.class).to(DiscoveryMetastoreLocator.class).in(Scopes.SINGLETON);
+
+        configBinder(binder).bindConfig(DiscoveryMetastoreConfig.class);
+        binder.bind(TokenAwareMetastoreClientFactory.class).to(DiscoveryTokenAwareMetastoreClientFactory.class).in(Scopes.SINGLETON);
         configBinder(binder).bindConfig(ThriftMetastoreConfig.class);
         newOptionalBinder(binder, Key.get(new TypeLiteral<ExecutorService>() {}, ThriftHiveWriteStatisticsExecutor.class))
                 .setDefault().toProvider(ThriftHiveMetastoreStatisticExecutorProvider.class).in(Scopes.SINGLETON);

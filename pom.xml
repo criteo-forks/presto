@@ -40,6 +40,7 @@
         <module>core/trino-spi</module>
         <module>core/trino-web-ui</module>
         <module>docs</module>
+        <module>lib/consul-client</module>
         <module>lib/trino-array</module>
         <module>lib/trino-cache</module>
         <module>lib/trino-filesystem</module>
@@ -204,6 +205,7 @@
         <dep.kafka-clients.version>4.1.0</dep.kafka-clients.version>
         <dep.okhttp.version>5.1.0</dep.okhttp.version>
         <dep.okio.version>3.16.0</dep.okio.version>
+        <dep.orbitz-consul.version>1.5.3</dep.orbitz-consul.version>
         <dep.parquet.version>1.16.0</dep.parquet.version>
         <dep.plugin.failsafe.version>${dep.plugin.surefire.version}</dep.plugin.failsafe.version>
         <dep.protobuf.version>3.25.8</dep.protobuf.version>

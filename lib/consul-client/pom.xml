@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.trino</groupId>
+        <artifactId>trino-root</artifactId>
+        <version>477</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+    <groupId>com.criteo</groupId>
+    <artifactId>consul-client</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Criteo Shaded Consul Client (OkHttp 4)</name>
+    <description>Internal shaded wrapper around com.orbitz.consul:consul-client with OkHttp 4.9.0 relocation.</description>
+    <properties>
+        <mdep.analyze.skip>true</mdep.analyze.skip>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>com.orbitz.consul</groupId>
+            <artifactId>consul-client</artifactId>
+            <version>${dep.orbitz-consul.version}</version>
+            <scope>compile</scope>
+            <optional>true</optional>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.9.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.squareup.retrofit2</groupId>
+            <artifactId>converter-jackson</artifactId>
+            <version>2.9.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.squareup.retrofit2</groupId>
+            <artifactId>retrofit</artifactId>
+            <version>2.9.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.20.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.20.0</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.9.0</version>
+                <configuration>
+                    <ignoredUnusedDeclaredDependencies>
+                        <ignoredUnusedDeclaredDependency>com.orbitz.consul:consul-client</ignoredUnusedDeclaredDependency>
+                        <ignoredUnusedDeclaredDependency>com.squareup.okhttp3:okhttp</ignoredUnusedDeclaredDependency>
+                        <ignoredUnusedDeclaredDependency>com.squareup.retrofit2:converter-jackson</ignoredUnusedDeclaredDependency>
+                        <ignoredUnusedDeclaredDependency>com.squareup.retrofit2:retrofit</ignoredUnusedDeclaredDependency>
+                    </ignoredUnusedDeclaredDependencies>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>default</id>
+                        <goals>
+                            <goal>analyze-only</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <phase>package</phase>
+                        <configuration>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+
+                            <relocations>
+                                <relocation>
+                                    <pattern>okhttp3</pattern>
+                                    <shadedPattern>com.criteo.shadow.okhttp3</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>retrofit2</pattern>
+                                    <shadedPattern>com.criteo.shadow.retrofit2</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>retrofit2.converter.jackson</pattern>
+                                    <shadedPattern>com.criteo.shadow.retrofit2.converter.jackson</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>kotlin</pattern>
+                                    <shadedPattern>com.criteo.shadow.kotlin</shadedPattern>
+                                </relocation>
+
+                                <relocation>
+                                    <pattern>intellij</pattern>
+                                    <shadedPattern>com.criteo.shadow.intellij</shadedPattern>
+                                </relocation>
+
+                                <relocation>
+                                    <pattern>jetbrains</pattern>
+                                    <shadedPattern>com.criteo.shadow.jetbrains</shadedPattern>
+                                </relocation>
+
+                                <relocation>
+                                    <pattern>okio</pattern>
+                                    <shadedPattern>com.criteo.shadow.okio</shadedPattern>
+                                </relocation>
+                            </relocations>
+
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>**/*.knm</exclude>
+                                        <exclude>**/linkdata/**</exclude>
+                                        <exclude>**/manifest</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
+
+                            <finalName>${project.artifactId}-${project.version}</finalName>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.jetbrains:annotations</exclude>
+                                </excludes>
+                            </artifactSet>
+
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
