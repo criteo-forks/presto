@@ -18,6 +18,7 @@ import io.trino.metastore.type.Category;
 import io.trino.metastore.type.ListTypeInfo;
 import io.trino.metastore.type.MapTypeInfo;
 import io.trino.metastore.type.StructTypeInfo;
+import io.trino.metastore.type.TypeInfoFactory;
 import io.trino.plugin.hive.HiveTimestampPrecision;
 import io.trino.spi.type.CharType;
 import io.trino.spi.type.DecimalType;
@@ -26,7 +27,10 @@ import io.trino.spi.type.TypeManager;
 import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.trino.metastore.HiveType.HIVE_BOOLEAN;
@@ -42,7 +46,6 @@ import static io.trino.plugin.hive.util.HiveTypeTranslator.toHiveType;
 import static io.trino.plugin.hive.util.HiveTypeUtil.getType;
 import static io.trino.plugin.hive.util.HiveTypeUtil.getTypeSignature;
 import static io.trino.plugin.hive.util.HiveUtil.extractStructFieldTypes;
-import static java.lang.Math.min;
 import static java.util.Objects.requireNonNull;
 
 public final class HiveCoercionPolicy
@@ -59,7 +62,30 @@ public final class HiveCoercionPolicy
         return new HiveCoercionPolicy(typeManager).canCoerce(fromHiveType, toHiveType, hiveTimestampPrecision);
     }
 
+    /**
+     * If coercion is not possible due to one or more invalid primitive type change: return an empty Option
+     * Otherwise return a composite schema that has:
+     * - toHiveType structure (for all nested fields at all depths: map, array, structs) ordering included
+     * - fromHiveType primitive types (aka: leaf types)
+     *
+     * The returned HiveType is aimed to be passed to the file format reader:
+     * - so the file reader can read the file with it's correct primitive types
+     * - be coercible to the toType thanks to leaf type coercions only
+     */
+    public static Optional<HiveType> coercibleIntermediate(TypeManager typeManager, HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        return new HiveCoercionPolicy(typeManager).coercibleIntermediate(fromHiveType, toHiveType, hiveTimestampPrecision);
+    }
+
     private boolean canCoerce(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        return canCoerceForPrimitive(fromHiveType, toHiveType, hiveTimestampPrecision)
+                || canCoerceForList(fromHiveType, toHiveType, hiveTimestampPrecision)
+                || canCoerceForMap(fromHiveType, toHiveType, hiveTimestampPrecision)
+                || canCoerceForStructOrUnion(fromHiveType, toHiveType, hiveTimestampPrecision);
+    }
+
+    private boolean canCoerceForPrimitive(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
     {
         Type fromType = typeManager.getType(getTypeSignature(fromHiveType, hiveTimestampPrecision));
         Type toType = typeManager.getType(getTypeSignature(toHiveType, hiveTimestampPrecision));
@@ -124,9 +150,7 @@ public final class HiveCoercionPolicy
                     toHiveType.equals(HIVE_LONG);
         }
 
-        return canCoerceForList(fromHiveType, toHiveType, hiveTimestampPrecision)
-                || canCoerceForMap(fromHiveType, toHiveType, hiveTimestampPrecision)
-                || canCoerceForStructOrUnion(fromHiveType, toHiveType, hiveTimestampPrecision);
+        return false;
     }
 
     private boolean canCoerceForMap(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
@@ -165,18 +189,146 @@ public final class HiveCoercionPolicy
         List<HiveType> fromFieldTypes = extractStructFieldTypes(fromHiveTypeStruct);
         List<HiveType> toFieldTypes = extractStructFieldTypes(toHiveTypeStruct);
         // Rule:
-        // * Fields may be added or dropped from the end.
-        // * For all other field indices, the corresponding fields must have
-        //   the same name, and the type must be coercible.
-        for (int i = 0; i < min(fromFieldTypes.size(), toFieldTypes.size()); i++) {
-            if (!fromFieldNames.get(i).equalsIgnoreCase(toFieldNames.get(i))) {
-                return false;
-            }
-            if (!fromFieldTypes.get(i).equals(toFieldTypes.get(i)) && !canCoerce(fromFieldTypes.get(i), toFieldTypes.get(i), hiveTimestampPrecision)) {
-                return false;
+        // * Fields may be added or dropped.
+        // * A field with a given name must be of the same type or coercible.
+        for (int toIdx = 0; toIdx < toFieldTypes.size(); toIdx++) {
+            int fromIdx = indexOfIgnoreCase(fromFieldNames, toFieldNames.get(toIdx));
+            if (fromIdx >= 0) {
+                HiveType fromType = fromFieldTypes.get(fromIdx);
+                HiveType toType = toFieldTypes.get(toIdx);
+                if (!fromType.equals(toType) && !canCoerce(fromType, toType, hiveTimestampPrecision)) {
+                    return false;
+                }
             }
         }
         return true;
+    }
+
+    private Optional<HiveType> coercibleIntermediate(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        if (fromHiveType.equals(toHiveType) || canCoerceForPrimitive(fromHiveType, toHiveType, hiveTimestampPrecision)) {
+            return Optional.of(fromHiveType);
+        }
+
+        Optional<HiveType> listOpt = coercibleIntermediateForList(fromHiveType, toHiveType, hiveTimestampPrecision);
+        if (listOpt.isPresent()) {
+            return listOpt;
+        }
+
+        Optional<HiveType> structOpt = coercibleIntermediateForStructOrUnion(fromHiveType, toHiveType, hiveTimestampPrecision);
+        if (structOpt.isPresent()) {
+            return structOpt;
+        }
+
+        Optional<HiveType> mapOpt = coercibleIntermediateForMap(fromHiveType, toHiveType, hiveTimestampPrecision);
+        if (mapOpt.isPresent()) {
+            return mapOpt;
+        }
+
+        return Optional.empty();
+    }
+
+    private Optional<HiveType> coercibleIntermediateForMap(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        if (fromHiveType.getCategory() != Category.MAP || toHiveType.getCategory() != Category.MAP) {
+            return Optional.empty();
+        }
+
+        MapTypeInfo fromMap = (MapTypeInfo) fromHiveType.getTypeInfo();
+        MapTypeInfo toMap = (MapTypeInfo) toHiveType.getTypeInfo();
+
+        HiveType fromKey = HiveType.valueOf(fromMap.getMapKeyTypeInfo().getTypeName());
+        HiveType fromValue = HiveType.valueOf(fromMap.getMapValueTypeInfo().getTypeName());
+
+        HiveType toKey = HiveType.valueOf(toMap.getMapKeyTypeInfo().getTypeName());
+        HiveType toValue = HiveType.valueOf(toMap.getMapValueTypeInfo().getTypeName());
+
+        Optional<HiveType> keyType =
+                fromKey.equals(toKey)
+                        ? Optional.of(fromKey)
+                        : coercibleIntermediate(fromKey, toKey, hiveTimestampPrecision);
+
+        if (keyType.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Optional<HiveType> valueType =
+                fromValue.equals(toValue)
+                        ? Optional.of(fromValue)
+                        : coercibleIntermediate(fromValue, toValue, hiveTimestampPrecision);
+
+        if (valueType.isEmpty()) {
+            return Optional.empty();
+        }
+
+        return Optional.of(HiveType.fromTypeInfo(
+                TypeInfoFactory.getMapTypeInfo(
+                        keyType.get().getTypeInfo(),
+                        valueType.get().getTypeInfo())));
+    }
+
+    private Optional<HiveType> coercibleIntermediateForList(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        if (fromHiveType.getCategory() != Category.LIST || toHiveType.getCategory() != Category.LIST) {
+            return Optional.empty();
+        }
+
+        HiveType fromElementType = HiveType.valueOf(((ListTypeInfo) fromHiveType.getTypeInfo()).getListElementTypeInfo().getTypeName());
+        HiveType toElementType = HiveType.valueOf(((ListTypeInfo) toHiveType.getTypeInfo()).getListElementTypeInfo().getTypeName());
+
+        if (fromElementType.equals(toElementType)) {
+            return Optional.of(fromHiveType);
+        }
+        return coercibleIntermediate(fromElementType, toElementType, hiveTimestampPrecision)
+                .map(elementTypeMiddleGround ->
+                        HiveType.fromTypeInfo(
+                                TypeInfoFactory.getListTypeInfo(elementTypeMiddleGround.getTypeInfo())));
+    }
+
+    private Optional<HiveType> coercibleIntermediateForStructOrUnion(HiveType fromHiveType, HiveType toHiveType, HiveTimestampPrecision hiveTimestampPrecision)
+    {
+        if (!isStructOrUnion(fromHiveType) || !isStructOrUnion(toHiveType)) {
+            return Optional.empty();
+        }
+
+        HiveType fromHiveTypeStruct = (fromHiveType.getCategory() == Category.UNION)
+                ? convertUnionToStruct(fromHiveType, typeManager, hiveTimestampPrecision)
+                : fromHiveType;
+        HiveType toHiveTypeStruct = (toHiveType.getCategory() == Category.UNION)
+                ? convertUnionToStruct(toHiveType, typeManager, hiveTimestampPrecision)
+                : toHiveType;
+
+        List<String> fromFieldNames = ((StructTypeInfo) fromHiveTypeStruct.getTypeInfo()).getAllStructFieldNames();
+        StructTypeInfo toStructTypeInfo = (StructTypeInfo) toHiveTypeStruct.getTypeInfo();
+        List<String> toFieldNames = toStructTypeInfo.getAllStructFieldNames();
+        List<HiveType> fromFieldTypes = extractStructFieldTypes(fromHiveTypeStruct);
+        List<HiveType> toFieldTypes = extractStructFieldTypes(toHiveTypeStruct);
+
+        List<String> fieldDefinitions = new ArrayList<>(toFieldTypes.size());
+
+        // Rule:
+        // * Fields may be added or dropped.
+        // * A field with a given name must be of the same type or coercible.
+        for (int toIdx = 0; toIdx < toFieldTypes.size(); toIdx++) {
+            String toFieldName = toFieldNames.get(toIdx);
+            HiveType resultingType = toFieldTypes.get(toIdx);
+
+            int fromIdx = indexOfIgnoreCase(fromFieldNames, toFieldName);
+            if (fromIdx >= 0) {
+                HiveType fromType = fromFieldTypes.get(fromIdx);
+                HiveType toType = toFieldTypes.get(toIdx);
+
+                Optional<HiveType> fieldMiddleGround = coercibleIntermediate(fromType, toType, hiveTimestampPrecision);
+                if (fieldMiddleGround.isEmpty()) {
+                    return Optional.empty();
+                }
+                resultingType = fieldMiddleGround.get();
+            }
+
+            fieldDefinitions.add(toFieldName + ":" + resultingType.getTypeInfo().getTypeName());
+        }
+
+        return Optional.of(HiveType.valueOf("struct<" + String.join(",", fieldDefinitions) + ">"));
     }
 
     private static boolean isStructOrUnion(HiveType hiveType)
@@ -188,5 +340,16 @@ public final class HiveCoercionPolicy
     {
         checkArgument(unionType.getCategory() == Category.UNION, "Can only convert union type to struct type, given type: %s", getTypeSignature(unionType, hiveTimestampPrecision));
         return toHiveType(getType(unionType, typeManager, hiveTimestampPrecision));
+    }
+
+    private static int indexOfIgnoreCase(List<String> fieldNames, String fieldName)
+    {
+        String target = fieldName.toLowerCase(Locale.ENGLISH);
+        for (int i = 0; i < fieldNames.size(); i++) {
+            if (fieldNames.get(i).toLowerCase(Locale.ENGLISH).equals(target)) {
+                return i;
+            }
+        }
+        return -1;
     }
 }
