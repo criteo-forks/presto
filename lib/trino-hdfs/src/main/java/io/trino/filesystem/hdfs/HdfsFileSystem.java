@@ -403,7 +403,7 @@ class HdfsFileSystem
                 String prefix = (rawFileSystem instanceof ViewFileSystem) ? relativePrefix : temporaryPrefix;
 
                 // create a temporary directory on the same file system
-                Path temporaryRoot = new Path(targetPath, prefix);
+                Path temporaryRoot = new Path(targetPath.getParent(), prefix);
                 Path temporaryPath = new Path(temporaryRoot, randomUUID().toString());
                 Location temporaryLocation = Location.of(temporaryPath.toString());
 
